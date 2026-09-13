@@ -1,16 +1,22 @@
 import telebot
 import sqlite3
+import time
 
 BOT_TOKEN = "8952553079:AAGoWGrfuMOhEy3QyGmV0_NcI8hI7mSBiZY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 def fetch_status_from_db(ticket_id):
-    conn = sqlite3.connect("grievances.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT status, department, summary FROM grievances WHERE id=?", (ticket_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result
+    try:
+        # The crucial fix for Streamlit Cloud threading: check_same_thread=False
+        conn = sqlite3.connect("grievances.db", check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, department, summary FROM grievances WHERE id=?", (ticket_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"Database error: {e}")
+        return None
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -32,13 +38,15 @@ def check_ticket_status(message):
             reply = f"🏛️ *JanSeva AI Ticket Update*\n\n*ID:* {ticket_id}\n*Status:* {status}\n*Department:* {dept}\n*Issue:* {summary}"
             bot.reply_to(message, reply, parse_mode="Markdown")
         else:
-            bot.reply_to(message, "❌ Ticket not found. Please check the ID and try again.")
+            bot.reply_to(message, "❌ Ticket not found in the live database. Please check the ID.")
             
     except Exception as e:
         bot.reply_to(message, "An error occurred while checking your status.")
 
 def run_bot():
-    """This function lets Streamlit run the bot in the background."""
-    # Removes any existing webhook to prevent conflicts
-    bot.remove_webhook()
-    bot.infinity_polling()
+    try:
+        bot.remove_webhook()
+        time.sleep(2) # Give the website 2 seconds to boot up first
+        bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    except Exception as e:
+        print(f"Bot crashed: {e}")
