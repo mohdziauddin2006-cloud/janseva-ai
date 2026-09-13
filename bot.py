@@ -1,8 +1,10 @@
 import telebot
 import time
+import os
 from backend import analyze_grievance, save_complaint, get_ticket_status
 
-BOT_TOKEN = "8952553079:AAGoWGrfuMOhEy3QyGmV0_NcI8hI7mSBiZY"
+# Pull token securely from Render environment to prevent GitHub bans
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 @bot.message_handler(commands=['start', 'help'])
