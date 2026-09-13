@@ -1,23 +1,11 @@
 import streamlit as st
 import pandas as pd
-import threading
 from backend import (
     analyze_grievance, save_complaint, get_all_complaints, 
     check_duplicate, update_ticket_status, get_ticket_status
 )
-import bot # Imports your chatbot
 
 st.set_page_config(page_title="JanSeva AI", layout="wide")
-
-# --- HACKATHON CLOUD TRICK: Start bot inside the website ---
-@st.cache_resource
-def start_bot_thread():
-    thread = threading.Thread(target=bot.run_bot, daemon=True)
-    thread.start()
-    return True
-
-start_bot_thread()
-# -------------------------------------------------------------
 
 st.title("🇮🇳 JanSeva AI: Public Grievance Redressal")
 st.write("Automated AI Triage, Department Routing & SLA Monitoring")
