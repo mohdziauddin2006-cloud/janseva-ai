@@ -42,28 +42,35 @@ with tab2:
             selected_ticket = st.selectbox("Select Ticket to Inspect", df["Ticket ID"].tolist())
             ticket_data = get_ticket_details(selected_ticket)
             
-            # --- HIGH-SPEED MEDIA STREAMING VIEWER ---
+            # --- UNIVERSAL MEDIA VIEWER ---
             if ticket_data and ticket_data.get("media_path"):
                 st.write("**Attached Citizen Evidence:**")
                 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-                media_info = ticket_data["media_path"]
+                
+                # Strip old hardcoded extensions if reading old DB entries
+                raw_file_id = ticket_data["media_path"].split('.')[0] 
                 
                 try:
-                    # Separate the File ID from the extension
-                    file_id, ext = os.path.splitext(media_info)
-                    
-                    # Ping Telegram API for the live streaming link
-                    req = requests.get(f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}").json()
+                    # Ask Telegram for the real file details
+                    req = requests.get(f"https://api.telegram.org/bot{bot_token}/getFile?file_id={raw_file_id}").json()
                     file_path = req["result"]["file_path"]
                     direct_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
                     
-                    # Stream directly from Telegram CDN
-                    if ext == ".jpg":
+                    # Extract the true extension
+                    _, ext = os.path.splitext(file_path)
+                    ext = ext.lower()
+                    
+                    # Dynamic Rendering
+                    if ext in ['.jpg', '.jpeg', '.png', '.webp']:
                         st.image(direct_url, width=300)
-                    elif ext == ".mp4":
+                    elif ext in ['.mp4', '.webm', '.mov', '.ogg']:
                         st.video(direct_url)
-                    elif ext == ".ogg":
+                    elif ext in ['.mp3', '.wav', '.m4a', '.flac']:
                         st.audio(direct_url)
+                    else:
+                        st.info(f"📁 Raw Evidence File Attached ({ext})")
+                        st.markdown(f"[**⬇️ Click Here to Download Evidence**]({direct_url})", unsafe_allow_html=True)
+                        
                 except Exception as e:
                     st.error("Media streaming link has expired or is unavailable.")
             else:

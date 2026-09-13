@@ -89,7 +89,7 @@ def get_ticket_details(ticket_id):
     conn.close()
     if row:
         return {
-            "id": row[0], "status": row[8], "chat_id": row[9], "media_path": row[10]
+            "id": row[0], "status": row[8], "chat_id": row[9], "media_path": row[10] # Now safely stores raw file_id
         }
     return None
 
