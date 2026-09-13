@@ -1,117 +1,144 @@
 import os
+import psycopg2
 import json
 import math
-import psycopg2
 from datetime import datetime
 from google import genai
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+API_KEY = os.environ.get("GEMINI_API_KEY")
+DB_URL = os.environ.get("DATABASE_URL")
 
-def get_db():
-    return psycopg2.connect(DATABASE_URL)
+def get_conn():
+    return psycopg2.connect(DB_URL)
 
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    
-    # 1. Create the base table if it doesn't exist at all
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS grievances (
-            id TEXT PRIMARY KEY,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            chat_id TEXT,
-            user_name TEXT,
-            raw_text TEXT,
-            media_type TEXT,
-            media_file_id TEXT,
-            lat DOUBLE PRECISION,
-            lon DOUBLE PRECISION,
-            ward TEXT,
-            category TEXT,
-            department TEXT,
-            severity TEXT,
-            summary TEXT,
-            status TEXT DEFAULT 'Pending'
-        );
-    """)
-    conn.commit()
-    
-    # 2. Safely force Postgres to upgrade the old table with any missing columns
-    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS user_name TEXT;")
-    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS chat_id TEXT;")
-    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS media_type TEXT;")
-    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS media_file_id TEXT;")
-    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS raw_text TEXT;")
-    conn.commit()
-    
-    cur.close()
-    conn.close()
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS grievances (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                ward TEXT,
+                raw_text TEXT,
+                category TEXT,
+                department TEXT,
+                severity TEXT,
+                summary TEXT,
+                status TEXT,
+                chat_id TEXT,
+                media_path TEXT,
+                lat REAL,
+                lng REAL
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("DB Init Error:", e)
 
-def analyze_grievance(text):
-    client = genai.Client(api_key=GEMINI_API_KEY)
+def get_nearest_office(lat, lng):
+    offices = {
+        "Zone 1 - Central Headquarters": (17.3850, 78.4867),
+        "Zone 2 - North District": (17.4400, 78.4700),
+        "Zone 3 - South District": (17.3600, 78.4700)
+    }
+    closest_ward = "Zone 1 - Central Headquarters"
+    min_dist = float('inf')
+    for ward, coords in offices.items():
+        dist = math.hypot(lat - coords[0], lng - coords[1])
+        if dist < min_dist:
+            min_dist = dist
+            closest_ward = ward
+    return closest_ward
+
+def check_density(lat, lng, current_severity):
+    if lat == 0.0 or lng == 0.0:
+        return current_severity
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT lat, lng FROM grievances WHERE status != 'Resolved'")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        nearby_count = 0
+        R = 6371000 # Earth radius
+        for row in rows:
+            r_lat, r_lng = row[0], row[1]
+            if r_lat == 0.0 or r_lng == 0.0: continue
+            
+            phi1, phi2 = math.radians(lat), math.radians(r_lat)
+            dphi = math.radians(r_lat - lat)
+            dlng = math.radians(r_lng - lng)
+            a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlng/2)**2
+            dist = R * (2 * math.atan2(math.sqrt(a), math.sqrt(1-a)))
+            
+            if dist <= 50:
+                nearby_count += 1
+                
+        if nearby_count >= 3:
+            return "🔥 CRITICAL (High Density: 3+ reports within 50m)"
+        return current_severity
+    except:
+        return current_severity
+
+def analyze_grievance(complaint_text):
+    client = genai.Client(api_key=API_KEY)
     prompt = f"""
-    Analyze this public grievance text: "{text}"
-    Return ONLY a valid JSON object with keys:
-    - "category": [Water Supply, Sanitation, Roads, Electricity, Public Health]
-    - "department": [Water Board, Solid Waste, Public Works, Power Bureau, Health Dept]
-    - "severity": "High" | "Medium" | "Low"
-    - "summary": 1 concise sentence summary
+    You are an expert government grievance triage system. Analyze the following citizen complaint and categorize it.
+    Return ONLY a valid JSON object with no markdown.
+    Strictly choose the "category" from: [Water Supply, Sanitation & Waste, Roads & Traffic, Electricity]
+    Strictly choose the "department" from: [Water Board, Solid Waste Management, Public Works Dept, Power Bureau]
+    Required keys: "category", "department", "severity" (High, Medium, Low), "summary" (One sentence summary)
+    Complaint: {complaint_text}
     """
     try:
-        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        clean = res.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean)
-    except:
-        return {"category": "General", "department": "Civic Body", "severity": "Medium", "summary": text[:80] if text else "Media attached"}
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_text)
+    except Exception:
+        return {"category": "General", "department": "Public Grievance Cell", "severity": "Medium", "summary": complaint_text[:80]}
 
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-def check_50m_density(lat, lon):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT lat, lon FROM grievances WHERE status != 'Resolved' AND lat IS NOT NULL AND lon IS NOT NULL")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    cluster_count = sum(1 for r_lat, r_lon in rows if haversine(lat, lon, r_lat, r_lon) <= 50)
-    return "🔥 CRITICAL" if cluster_count >= 3 else None
-
-def save_grievance(chat_id, user_name, raw_text, media_type, media_file_id, lat, lon):
+def save_complaint(ward, complaint_text, ai_data, chat_id="", media_path="", lat=0.0, lng=0.0):
     init_db()
-    ai_data = analyze_grievance(raw_text if raw_text else "Media file uploaded")
-    
-    density_sev = check_50m_density(lat, lon) if lat and lon else None
-    final_sev = density_sev if density_sev else ai_data.get("severity", "Medium")
-    
+    final_severity = check_density(lat, lng, ai_data.get("severity", "Medium"))
+    conn = get_conn()
+    cursor = conn.cursor()
     ticket_id = f"GRV-{datetime.now().strftime('%m%d%H%M%S')}"
-    ward = "Ward 1 - Central" 
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO grievances (id, chat_id, user_name, raw_text, media_type, media_file_id, lat, lon, ward, category, department, severity, summary, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
-    """, (ticket_id, str(chat_id), user_name, raw_text, media_type, media_file_id, lat, lon, ward, ai_data.get("category"), ai_data.get("department"), final_sev, ai_data.get("summary")))
+    cursor.execute('''
+        INSERT INTO grievances (id, timestamp, ward, raw_text, category, department, severity, summary, status, chat_id, media_path, lat, lng)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (ticket_id, timestamp, ward, complaint_text, ai_data.get("category", "General"), ai_data.get("department", "Civic Body"), final_severity, ai_data.get("summary", ""), "Pending", chat_id, media_path, lat, lng))
     conn.commit()
-    cur.close()
     conn.close()
-    
-    return {"ticket_id": ticket_id, "category": ai_data.get("category"), "severity": final_sev, "summary": ai_data.get("summary")}
+    return ticket_id
 
 def get_all_complaints():
     init_db()
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, timestamp::date, user_name, category, department, status, severity, summary, lat, lon, media_type, media_file_id, raw_text FROM grievances ORDER BY timestamp DESC")
-    rows = cur.fetchall()
-    cur.close()
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, timestamp, ward, category, department, severity, summary, status FROM grievances ORDER BY timestamp DESC")
+    rows = cursor.fetchall()
     conn.close()
     return rows
+
+def get_ticket_details(ticket_id):
+    init_db()
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM grievances WHERE id=%s", (ticket_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"id": row[0], "status": row[8], "chat_id": row[9], "media_path": row[10], "lat": row[11], "lng": row[12]}
+    return None
+
+def update_ticket_status(ticket_id, new_status):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE grievances SET status=%s WHERE id=%s", (new_status, ticket_id))
+    conn.commit()
+    conn.close()
