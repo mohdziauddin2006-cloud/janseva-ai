@@ -1,11 +1,11 @@
-import streamlit as st
+import os
 import sqlite3
 import json
 from datetime import datetime
 from google import genai
 
 # --- CONFIGURATION ---
-API_KEY = st.secrets["GEMINI_API_KEY"]
+API_KEY = os.environ.get("GEMINI_API_KEY")
 DB_NAME = "grievances.db"
 
 def init_db():
@@ -47,7 +47,7 @@ def analyze_grievance(complaint_text):
     """
     try:
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        clean_text = response.text.strip().removeprefix('```json').removesuffix('```').strip()
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(clean_text)
     except Exception as e:
         return {"category": "General", "department": "Public Grievance Cell", "severity": "Medium", "summary": complaint_text[:80], "error": str(e)}
