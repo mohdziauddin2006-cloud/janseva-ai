@@ -1,11 +1,22 @@
 import streamlit as st
 import pandas as pd
+import subprocess
+import sys
 from backend import (
     analyze_grievance, save_complaint, get_all_complaints, 
     check_duplicate, update_ticket_status, get_ticket_status
 )
 
 st.set_page_config(page_title="JanSeva AI", layout="wide")
+
+# --- HACKATHON CLOUD TRICK: Start bot as a separate OS process ---
+@st.cache_resource
+def start_bot_process():
+    subprocess.Popen([sys.executable, "bot.py"])
+    return True
+
+start_bot_process()
+# -----------------------------------------------------------------
 
 st.title("🇮🇳 JanSeva AI: Public Grievance Redressal")
 st.write("Automated AI Triage, Department Routing & SLA Monitoring")
