@@ -2,97 +2,72 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
-from backend import (
-    analyze_grievance, save_complaint, get_all_complaints, 
-    check_duplicate, update_ticket_status, get_ticket_status, get_ticket_details
-)
+from backend import (analyze_grievance, save_complaint, get_all_complaints, update_ticket_status, get_ticket_details)
 
 st.set_page_config(page_title="JanSeva AI", layout="wide")
 st.title("🇮🇳 JanSeva AI: Public Grievance Redressal")
-st.write("Automated AI Triage & Two-Way Citizen Push Notifications")
+st.write("Automated AI Triage, GPS Routing & Two-Way Citizen Push Notifications")
 
-tab1, tab2, tab3 = st.tabs(["Citizen Lodging Portal", "Ward Officer Dashboard", "Public Analytics"])
+tab1, tab2 = st.tabs(["Citizen Lodging Portal", "Ward Officer Dashboard"])
 
 with tab1:
     st.subheader("File a Grievance")
-    ward = st.selectbox("Select Your Ward / Zone", ["Ward 1 - Central", "Ward 2 - North", "Ward 3 - South"])
+    ward = st.selectbox("Select Your Ward / Zone", ["Zone 1 - Central Headquarters", "Zone 2 - North District", "Zone 3 - South District"])
     complaint_text = st.text_area("Describe your grievance in detail:")
-    
     if st.button("Submit Grievance"):
         if complaint_text:
             with st.spinner("AI is analyzing..."):
                 ai_decision = analyze_grievance(complaint_text)
-                ticket_id = save_complaint(ward, complaint_text, ai_decision)
+                ticket_id = save_complaint(ward, complaint_text, ai_decision, "", "", 0.0, 0.0)
             st.success(f"Grievance Lodged! Your Ticket ID: {ticket_id}")
-        else:
-            st.error("Please enter a complaint.")
 
 with tab2:
     st.subheader("Real-Time Officer Incident Board")
     rows = get_all_complaints()
     if rows:
         df = pd.DataFrame(rows, columns=["Ticket ID", "Logged At", "Ward", "Category", "Department", "Severity", "Summary", "Status"])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        def highlight_critical(val):
+            return 'background-color: #ff4b4b' if 'CRITICAL' in str(val) else ''
+        
+        st.dataframe(df.style.map(highlight_critical, subset=['Severity']), use_container_width=True, hide_index=True)
         
         st.divider()
-        st.subheader("Ticket Inspection & Action Panel")
         colA, colB = st.columns(2)
         
         with colA:
             selected_ticket = st.selectbox("Select Ticket to Inspect", df["Ticket ID"].tolist())
             ticket_data = get_ticket_details(selected_ticket)
             
-            # --- UNIVERSAL MEDIA VIEWER ---
-            if ticket_data and ticket_data.get("media_path"):
-                st.write("**Attached Citizen Evidence:**")
-                bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            if ticket_data:
+                if ticket_data.get("lat") and ticket_data.get("lng") and ticket_data["lat"] != 0.0:
+                    st.write("📍 **Live Incident Map:**")
+                    map_df = pd.DataFrame({'lat': [ticket_data['lat']], 'lon': [ticket_data['lng']]})
+                    st.map(map_df, zoom=15)
                 
-                # Strip old hardcoded extensions if reading old DB entries
-                raw_file_id = ticket_data["media_path"].split('.')[0] 
-                
-                try:
-                    # Ask Telegram for the real file details
-                    req = requests.get(f"https://api.telegram.org/bot{bot_token}/getFile?file_id={raw_file_id}").json()
-                    file_path = req["result"]["file_path"]
-                    direct_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
-                    
-                    # Extract the true extension
-                    _, ext = os.path.splitext(file_path)
-                    ext = ext.lower()
-                    
-                    # Dynamic Rendering
-                    if ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                        st.image(direct_url, width=300)
-                    elif ext in ['.mp4', '.webm', '.mov', '.ogg']:
-                        st.video(direct_url)
-                    elif ext in ['.mp3', '.wav', '.m4a', '.flac']:
-                        st.audio(direct_url)
-                    else:
-                        st.info(f"📁 Raw Evidence File Attached ({ext})")
-                        st.markdown(f"[**⬇️ Click Here to Download Evidence**]({direct_url})", unsafe_allow_html=True)
-                        
-                except Exception as e:
-                    st.error("Media streaming link has expired or is unavailable.")
-            else:
-                st.info("No media attached to this ticket.")
+                if ticket_data.get("media_path"):
+                    st.write("**Attached Citizen Evidence:**")
+                    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                    raw_file_id = ticket_data["media_path"].split('.')[0] 
+                    try:
+                        req = requests.get(f"https://api.telegram.org/bot{bot_token}/getFile?file_id={raw_file_id}").json()
+                        file_path = req["result"]["file_path"]
+                        direct_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+                        _, ext = os.path.splitext(file_path)
+                        if ext.lower() in ['.jpg', '.jpeg', '.png']: st.image(direct_url, width=300)
+                        elif ext.lower() in ['.mp4', '.mov']: st.video(direct_url)
+                        elif ext.lower() in ['.ogg', '.mp3', '.wav']: st.audio(direct_url)
+                        else: st.markdown(f"[**⬇️ Download Evidence**]({direct_url})", unsafe_allow_html=True)
+                    except:
+                        st.error("Media link unavailable.")
 
         with colB:
             new_status = st.selectbox("Update Status", ["Pending", "In Progress", "Resolved"])
             if st.button("Apply & Notify Citizen via Telegram"):
                 update_ticket_status(selected_ticket, new_status)
-                
                 if ticket_data and ticket_data.get("chat_id"):
                     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
                     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                    msg = f"🔔 *Live Update from Ward Officer!*\n\n🎫 *Ticket ID:* `{selected_ticket}`\n📊 *New Status:* *{new_status}*\n\nYour civic team is working on it."
+                    msg = f"🔔 *Live Update!*\n🎫 *Ticket ID:* `{selected_ticket}`\n📊 *New Status:* *{new_status}*"
                     requests.post(url, json={"chat_id": ticket_data["chat_id"], "text": msg, "parse_mode": "Markdown"})
-                    st.success(f"Status updated and push notification sent directly to Citizen's phone!")
-                    st.balloons()
-                else:
-                    st.warning("Status updated. (User submitted via web, no Telegram push available).")
-    else:
-        st.info("No active grievances.")
-
-with tab3:
-    st.subheader("📊 City-Wide Grievance Analytics")
-    st.info("Data visualizations will populate here as tickets enter the system.")
+                    st.success("Push notification sent to Citizen!")

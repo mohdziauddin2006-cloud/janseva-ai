@@ -8,7 +8,15 @@ def run_services():
     port = os.environ.get("PORT", "8501")
     print("🚀 Initializing JanSeva AI Multi-Service Protocol...")
 
-    # 1. Start Telegram Bot background process
+    # Ensure database tables exist before launching web interface
+    try:
+        from backend import init_db
+        init_db()
+        print("🗄️ PostgreSQL database tables verified.")
+    except Exception as e:
+        print(f"⚠️ Database pre-check encountered an issue: {e}")
+
+    # 1. Start Telegram Bot background worker
     bot_process = subprocess.Popen(
         [sys.executable, "bot.py"],
         stdout=sys.stdout,
@@ -52,7 +60,6 @@ def run_services():
 
     # 4. Process watchdog loop
     while True:
-        # Auto-resurrect the bot if an unhandled network disconnect occurs
         if bot_process.poll() is not None:
             print("⚠️ Telegram bot process dropped. Resurrecting worker immediately...")
             bot_process = subprocess.Popen(
@@ -61,7 +68,6 @@ def run_services():
                 stderr=sys.stderr
             )
 
-        # Exit main runner if the web server halts
         if streamlit_process.poll() is not None:
             print("🚨 Web dashboard service halted. Triggering shutdown...")
             shutdown(None, None)
