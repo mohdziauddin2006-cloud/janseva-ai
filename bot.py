@@ -1,107 +1,43 @@
-import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-import time
 import os
-import traceback
-from backend import analyze_grievance, save_complaint, get_ticket_status, get_nearest_office
+import telebot
+from telebot import types
+from backend import save_grievance
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-bot = telebot.TeleBot(BOT_TOKEN)
-
-# Temporary memory to hold loose data per user
+bot = telebot.TeleBot(os.getenv("TELEGRAM_BOT_TOKEN"))
 user_sessions = {}
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "🏛️ *Welcome to JanSeva AI Citizen Bot*\nSend a photo/video and share your location to file a grievance.", parse_mode="Markdown")
+    bot.reply_to(message, "🏛️ JanSeva AI. Please type your civic complaint (e.g., 'Broken pipe flooding the street').")
 
-@bot.message_handler(func=lambda msg: msg.text and msg.text.upper().startswith("STATUS"))
-def track_status(message):
-    try:
-        ticket_id = message.text.upper().split()[1].strip()
-        result = get_ticket_status(ticket_id)
-        if result:
-            bot.reply_to(message, f"📌 *ID:* `{ticket_id}`\n📊 *Status:* {result[0]}\n🏢 *Department:* {result[1]}", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, "❌ Ticket not found.")
-    except:
-        bot.reply_to(message, "⚠️ Error checking status.")
-
-@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'audio', 'document', 'animation'])
-def process_media(message):
-    chat_id = str(message.chat.id)
-    complaint_text = ""
-    file_id = ""
-
-    if chat_id not in user_sessions:
-        user_sessions[chat_id] = {"text": "", "file_id": ""}
-
-    try:
-        if message.content_type == 'text':
-            # Ignore status or command texts here
-            if message.text.startswith('/'): return
-            complaint_text = message.text
-            user_sessions[chat_id]["text"] = complaint_text
-        elif message.content_type == 'photo':
-            complaint_text = message.caption or "Visual public hazard."
-            file_id = message.photo[-1].file_id
-            user_sessions[chat_id]["text"] = complaint_text
-            user_sessions[chat_id]["file_id"] = file_id
-        elif message.content_type == 'video':
-            complaint_text = message.caption or "Video of public hazard."
-            file_id = message.video.file_id
-            user_sessions[chat_id]["text"] = complaint_text
-            user_sessions[chat_id]["file_id"] = file_id
-        elif message.content_type in ['voice', 'audio']:
-            complaint_text = message.caption or "Audio grievance submission."
-            file_id = message.voice.file_id if message.content_type == 'voice' else message.audio.file_id
-            user_sessions[chat_id]["text"] = complaint_text
-            user_sessions[chat_id]["file_id"] = file_id
-        elif message.content_type in ['document', 'animation']:
-            complaint_text = message.caption or "Attached media file."
-            file_id = message.document.file_id if message.content_type == 'document' else message.animation.file_id
-            user_sessions[chat_id]["text"] = complaint_text
-            user_sessions[chat_id]["file_id"] = file_id
-
-        # If we have text/media, prompt for location
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton("📍 Share Exact Location", request_location=True))
-        
-        bot.reply_to(message, "✅ Details captured!\n\nTap **📍 Share Exact Location** below to submit your grievance.", reply_markup=markup)
-        
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Error: `{str(e)}`")
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    user_sessions[message.chat.id] = {"raw_text": message.text}
+    markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+    # This button forces exact device GPS extraction
+    markup.add(types.KeyboardButton("📍 Share Exact Location", request_location=True))
+    bot.send_message(message.chat.id, "Please share your exact GPS location so we can scan for incident density in your 50m radius:", reply_markup=markup)
 
 @bot.message_handler(content_types=['location'])
-def process_location(message):
-    chat_id = str(message.chat.id)
-    lat = message.location.latitude
-    lng = message.location.longitude
-    
-    # Fallback if they didn't send text/media first
-    if chat_id not in user_sessions or not user_sessions[chat_id]["text"]:
-        user_sessions[chat_id] = {"text": "General location grievance report.", "file_id": ""}
+def handle_location(message):
+    cid = message.chat.id
+    if cid not in user_sessions:
+        bot.send_message(cid, "Please describe your issue first.")
+        return
 
-    bot.reply_to(message, "⏳ *Analyzing and routing to nearest ward...*", parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+    lat, lon = message.location.latitude, message.location.longitude
+    raw_text = user_sessions[cid]["raw_text"]
+    u_name = message.from_user.first_name
     
-    try:
-        data = user_sessions[chat_id]
-        ward = get_nearest_office(lat, lng)
-        ai_decision = analyze_grievance(data["text"])
-        
-        ticket_id = save_complaint(ward, data["text"], ai_decision, chat_id, data["file_id"], lat, lng)
-        
-        reply = (f"✅ *Grievance Dispatched!*\n\n🎫 *ID:* `{ticket_id}`\n📍 *Routed To:* {ward}\n🏢 *Dept:* {ai_decision.get('department', 'Civic Body')}\n⚡ *Severity:* {ai_decision.get('severity', 'Medium')}")
-        bot.reply_to(message, reply, parse_mode="Markdown")
-        
-        # Clear session
-        user_sessions[chat_id] = {"text": "", "file_id": ""}
-        
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Database Routing Error: `{str(e)}`")
+    bot.reply_to(message, "⏳ AI Triage & 50m Density Scan in progress...", reply_markup=types.ReplyKeyboardRemove())
+    
+    res = save_grievance(cid, u_name, raw_text, lat, lon)
+    
+    msg = (f"✅ **Grievance Registered!**\n\n🎫 ID: `{res['ticket_id']}`\n"
+           f"📁 Category: {res['category']}\n⚡ Priority: {res['severity']}\n"
+           f"📝 AI Summary: {res['summary']}")
+    bot.send_message(cid, msg, parse_mode="Markdown")
+    del user_sessions[cid]
 
 if __name__ == "__main__":
-    print("🤖 Resilient Bot active...")
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    bot.infinity_polling()
