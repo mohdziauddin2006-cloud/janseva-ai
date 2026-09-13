@@ -21,6 +21,8 @@ def init_db():
             chat_id TEXT,
             user_name TEXT,
             raw_text TEXT,
+            media_type TEXT,
+            media_file_id TEXT,
             lat DOUBLE PRECISION,
             lon DOUBLE PRECISION,
             ward TEXT,
@@ -32,6 +34,13 @@ def init_db():
         );
     """)
     conn.commit()
+    # Safely upgrade table if missing media columns
+    try:
+        cur.execute("ALTER TABLE grievances ADD COLUMN media_type TEXT;")
+        cur.execute("ALTER TABLE grievances ADD COLUMN media_file_id TEXT;")
+        conn.commit()
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback()
     cur.close()
     conn.close()
 
@@ -53,8 +62,7 @@ def analyze_grievance(text):
         return {"category": "General", "department": "Civic Body", "severity": "Medium", "summary": text[:80]}
 
 def haversine(lat1, lon1, lat2, lon2):
-    """Calculates exact distance in meters between two GPS coordinates."""
-    R = 6371000 # Earth radius in meters
+    R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
@@ -62,7 +70,6 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 def check_50m_density(lat, lon):
-    """Searches active database for complaints within a 50-meter radius."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT lat, lon FROM grievances WHERE status != 'Resolved' AND lat IS NOT NULL AND lon IS NOT NULL")
@@ -71,26 +78,24 @@ def check_50m_density(lat, lon):
     conn.close()
     
     cluster_count = sum(1 for r_lat, r_lon in rows if haversine(lat, lon, r_lat, r_lon) <= 50)
-    # If 3 or more people report an issue in the exact same 50m spot, auto-escalate.
     return "🔥 CRITICAL" if cluster_count >= 3 else None
 
-def save_grievance(chat_id, user_name, raw_text, lat, lon):
+def save_grievance(chat_id, user_name, raw_text, media_type, media_file_id, lat, lon):
     init_db()
-    ai_data = analyze_grievance(raw_text)
+    ai_data = analyze_grievance(raw_text if raw_text else "Media file uploaded")
     
-    # 1. AI decides baseline severity. 2. GPS Density overrides if it's a hotspot.
     density_sev = check_50m_density(lat, lon) if lat and lon else None
     final_sev = density_sev if density_sev else ai_data.get("severity", "Medium")
     
     ticket_id = f"GRV-{datetime.now().strftime('%m%d%H%M%S')}"
-    ward = "Ward 1 - Central" # Placeholder for nearest office routing
+    ward = "Ward 1 - Central" 
     
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO grievances (id, chat_id, user_name, raw_text, lat, lon, ward, category, department, severity, summary, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
-    """, (ticket_id, str(chat_id), user_name, raw_text, lat, lon, ward, ai_data.get("category"), ai_data.get("department"), final_sev, ai_data.get("summary")))
+        INSERT INTO grievances (id, chat_id, user_name, raw_text, media_type, media_file_id, lat, lon, ward, category, department, severity, summary, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+    """, (ticket_id, str(chat_id), user_name, raw_text, media_type, media_file_id, lat, lon, ward, ai_data.get("category"), ai_data.get("department"), final_sev, ai_data.get("summary")))
     conn.commit()
     cur.close()
     conn.close()
@@ -101,7 +106,7 @@ def get_all_complaints():
     init_db()
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, timestamp::date, user_name, category, department, status, severity, summary, lat, lon FROM grievances ORDER BY timestamp DESC")
+    cur.execute("SELECT id, timestamp::date, user_name, category, department, status, severity, summary, lat, lon, media_type, media_file_id, raw_text FROM grievances ORDER BY timestamp DESC")
     rows = cur.fetchall()
     cur.close()
     conn.close()
