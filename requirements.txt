@@ -1,5 +1,6 @@
 streamlit
-google-genai
-psycopg2-binary==2.9.9
-pandas
 pyTelegramBotAPI
+google-genai
+psycopg2-binary
+pandas
+requests
