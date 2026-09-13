@@ -30,7 +30,7 @@ def process_grievance(message):
     file_id = None
     ext = ""
 
-    # Handle text or media captions
+    # 1. Identify Media Type instantly
     if message.content_type == 'text':
         complaint_text = message.text
     elif message.content_type == 'photo':
@@ -47,24 +47,17 @@ def process_grievance(message):
         ext = ".ogg"
 
     if not complaint_text.strip():
-        bot.reply_to(message, "⚠️ Please include a caption.")
+        bot.reply_to(message, "⚠️ Please include a caption with your media.")
         return
 
-    bot.reply_to(message, "⏳ *Analyzing and saving media...*", parse_mode="Markdown")
+    bot.reply_to(message, "⏳ *Analyzing grievance...*", parse_mode="Markdown")
 
-    # Download Media
+    # 2. Skip downloading. Just save the File ID and Extension for lightning-fast speed.
     if file_id:
-        os.makedirs("media", exist_ok=True)
-        try:
-            file_info = bot.get_file(file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            media_path = f"media/{file_id}{ext}"
-            with open(media_path, 'wb') as new_file:
-                new_file.write(downloaded_file)
-        except Exception as e:
-            print("Media download failed:", e)
+        media_path = f"{file_id}{ext}"
 
     try:
+        # 3. Route through Gemini
         ai_decision = analyze_grievance(complaint_text)
         ticket_id = save_complaint("Ward 1 - Central", complaint_text, ai_decision, chat_id, media_path)
 
