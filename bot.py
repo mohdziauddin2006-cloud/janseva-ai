@@ -1,6 +1,7 @@
 import telebot
 import time
 import os
+import traceback
 from backend import analyze_grievance, save_complaint, get_ticket_status
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -22,7 +23,7 @@ def track_status(message):
     except:
         bot.reply_to(message, "⚠️ Error checking status.")
 
-@bot.message_handler(content_types=['text', 'photo', 'video', 'voice'])
+@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'document', 'animation'])
 def process_grievance(message):
     chat_id = str(message.chat.id)
     complaint_text = ""
@@ -30,41 +31,49 @@ def process_grievance(message):
     file_id = None
     ext = ""
 
-    # 1. Identify Media Type instantly
-    if message.content_type == 'text':
-        complaint_text = message.text
-    elif message.content_type == 'photo':
-        complaint_text = message.caption or "Visual public hazard."
-        file_id = message.photo[-1].file_id
-        ext = ".jpg"
-    elif message.content_type == 'video':
-        complaint_text = message.caption or "Video of public hazard."
-        file_id = message.video.file_id
-        ext = ".mp4"
-    elif message.content_type == 'voice':
-        complaint_text = "Audio grievance submission."
-        file_id = message.voice.file_id
-        ext = ".ogg"
-
-    if not complaint_text.strip():
-        bot.reply_to(message, "⚠️ Please include a caption with your media.")
-        return
-
-    bot.reply_to(message, "⏳ *Analyzing grievance...*", parse_mode="Markdown")
-
-    # 2. Skip downloading. Just save the File ID and Extension for lightning-fast speed.
-    if file_id:
-        media_path = f"{file_id}{ext}"
-
     try:
+        # 1. Identify Media Type (Including uncompressed documents)
+        if message.content_type == 'text':
+            complaint_text = message.text
+        elif message.content_type == 'photo':
+            complaint_text = message.caption or "Visual public hazard."
+            file_id = message.photo[-1].file_id
+            ext = ".jpg"
+        elif message.content_type == 'video':
+            complaint_text = message.caption or "Video of public hazard."
+            file_id = message.video.file_id
+            ext = ".mp4"
+        elif message.content_type in ['document', 'animation']:
+            complaint_text = message.caption or "Attached media file."
+            file_id = message.document.file_id if message.content_type == 'document' else message.animation.file_id
+            ext = ".mp4" 
+        elif message.content_type == 'voice':
+            complaint_text = message.caption or "Audio grievance submission."
+            file_id = message.voice.file_id
+            ext = ".ogg"
+
+        if not complaint_text.strip():
+            bot.reply_to(message, "⚠️ Please include a caption with your media.")
+            return
+
+        bot.reply_to(message, "⏳ *Analyzing grievance...*", parse_mode="Markdown")
+
+        # 2. Save Reference Link
+        if file_id:
+            media_path = f"{file_id}{ext}"
+
         # 3. Route through Gemini
         ai_decision = analyze_grievance(complaint_text)
         ticket_id = save_complaint("Ward 1 - Central", complaint_text, ai_decision, chat_id, media_path)
 
         reply = (f"✅ *Grievance Registered!*\n🎫 *ID:* `{ticket_id}`\n🏢 *Dept:* {ai_decision.get('department', 'Civic Body')}\n⚡ *Severity:* {ai_decision.get('severity', 'Medium')}")
         bot.reply_to(message, reply, parse_mode="Markdown")
+        
     except Exception as e:
-        bot.reply_to(message, "⚠️ Failed to process.")
+        # If it fails, send the exact error back to your phone
+        error_trace = traceback.format_exc()
+        print(error_trace) 
+        bot.reply_to(message, f"⚠️ System Error: `{str(e)}`. Check backend.py code.")
 
 if __name__ == "__main__":
     print("🤖 Bot active...")
