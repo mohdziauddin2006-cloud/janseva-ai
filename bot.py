@@ -44,7 +44,6 @@ def track_status(message):
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice'])
 def process_grievance(message):
-    # Extract complaint text from raw text or media caption
     complaint_text = ""
     if message.content_type == 'text':
         complaint_text = message.text
