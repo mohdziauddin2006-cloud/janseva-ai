@@ -14,6 +14,8 @@ def get_db():
 def init_db():
     conn = get_db()
     cur = conn.cursor()
+    
+    # 1. Create the base table if it doesn't exist at all
     cur.execute("""
         CREATE TABLE IF NOT EXISTS grievances (
             id TEXT PRIMARY KEY,
@@ -34,13 +36,15 @@ def init_db():
         );
     """)
     conn.commit()
-    # Safely upgrade table if missing media columns
-    try:
-        cur.execute("ALTER TABLE grievances ADD COLUMN media_type TEXT;")
-        cur.execute("ALTER TABLE grievances ADD COLUMN media_file_id TEXT;")
-        conn.commit()
-    except psycopg2.errors.DuplicateColumn:
-        conn.rollback()
+    
+    # 2. Safely force Postgres to upgrade the old table with any missing columns
+    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS user_name TEXT;")
+    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS chat_id TEXT;")
+    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS media_type TEXT;")
+    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS media_file_id TEXT;")
+    cur.execute("ALTER TABLE grievances ADD COLUMN IF NOT EXISTS raw_text TEXT;")
+    conn.commit()
+    
     cur.close()
     conn.close()
 
@@ -59,7 +63,7 @@ def analyze_grievance(text):
         clean = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(clean)
     except:
-        return {"category": "General", "department": "Civic Body", "severity": "Medium", "summary": text[:80]}
+        return {"category": "General", "department": "Civic Body", "severity": "Medium", "summary": text[:80] if text else "Media attached"}
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
