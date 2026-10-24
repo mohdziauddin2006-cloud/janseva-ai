@@ -30,6 +30,10 @@ Role-gated, not decorative. <span style="color: #FF0000;"><b>Every row keeps the
 | <kbd>🏛️ EXECUTIVE</kbd> | Executive Sanctions · Social Audit Ledger |
 | <kbd>👷 FIELD</kbd> | Field Execution (Material Budget) · Social Audit Ledger |
 
+```diff
+- ROLE GATE: PUBLIC / EXECUTIVE / FIELD. YOUR OPINION OF WHICH YOU ARE: IRRELEVANT.
+```
+
 ## 04 // DEPLOYMENT
 
 Four environment variables. Nothing hardcoded, nothing to hunt for.
